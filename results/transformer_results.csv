@@ -1,0 +1,2 @@
+model,representation,accuracy,precision,recall,f1,train_time
+Transformer,Subword+Attention,0.7687165775401069,0.762402088772846,0.7807486631016043,0.7714663143989432,88.95129036903381

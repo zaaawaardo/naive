@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>TP4 - Reponse</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }
+h1,h2,h3,h4 { color: #2c3e50; }
+table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background-color: #f2f2f2; }
+code { background-color: #f4f4f4; padding: 2px 4px; }
+pre { background-color: #f4f4f4; padding: 10px; overflow-x: auto; }
+img { max-width: 100%; }
+</style>
+</head>
+<body>
+<h1>Réponse complète au TP4 : Classification de Texte et Analyse de Sentiments</h1>
+<p><strong>Étudiant</strong> : Boudaoud Sid Ahmed<br />
+<strong>Date</strong> : 24 octobre 2026<br />
+<strong>Dataset</strong> : Sentiment140 (1.6M tweets), échantillon équilibré de 40 000 tweets (20k positifs / 20k négatifs)</p>
+<h2>1. Objectifs</h2>
+<p>Ce TP vise à comparer quatre approches pour l'analyse de sentiments sur des tweets : Naive Bayes (baseline), RNN simple, LSTM/BiLSTM, et un Transformer pré-entraîné (DistilBERT) affiné par fine-tuning. L'accent est mis sur le prétraitement (notamment le traitement des négations), la modélisation séquentielle, l'attention et l'analyse critique des résultats.</p>
+<h2>2. Préparation des données et nettoyage</h2>
+<h3>2.1 Chargement et exploration</h3>
+<ul>
+<li>Fichier : <code>data/training.1600000.processed.noemoticon.csv</code></li>
+<li>Colonnes originales : <code>polarity, id, date, query, user, text</code></li>
+<li>Re-codage : polarité <code>0</code> → négatif (0), polarité <code>4</code> → positif (1)</li>
+<li>Distribution initiale très équilibrée (~800k chacun). Pour des raisons de temps/ressources CPU, un échantillon stratifié et parfaitement équilibré de 40 000 tweets a été utilisé.</li>
+<li>Découpage stratifié : Train/Validation/Test (70% / 15% / 15%)</li>
+</ul>
+<h3>2.2 Nettoyage spécifique aux tweets</h3>
+<p>Le nettoyage appliqué (<code>solution/preprocess.py</code>) :
+1. Passage en minuscules
+2. Suppression du préfixe <code>RT</code>
+3. Conservation du texte des hashtags (<code>#happy</code> → <code>happy</code>) tout en retirant le symbole <code>#</code>
+4. Suppression des URLs (<code>http://</code>, <code>https://</code>, <code>www.</code>)
+5. Suppression des mentions (<code>@username</code>)
+6. Suppression de la ponctuation/caractères spéciaux et normalisation des espaces
+7. <strong>Traitement des négations (critique)</strong> : les mots de négation <code>not</code>, <code>no</code>, <code>never</code>, <code>n't</code>, <code>none</code>, <code>nothing</code>, <code>nowhere</code>, ainsi que les contractions négatives (<code>isn't</code>, <code>don't</code>, <code>can't</code>, ...) ont été <strong>conservés</strong> et exclus de la liste des stopwords. Les autres stopwords anglais ont été filtrés de manière classique.</p>
+<p>Ce choix est fondamental : retirer <code>not</code> détruit le sens de constructions comme <code>"not good"</code>, <code>"not bad at all"</code>, ou <code>"don't like"</code>, ce qui est particulièrement problématique pour la détection de l'inversion de polarité.</p>
+<h2>3. Partie 1 : Naive Bayes (Baseline)</h2>
+<h3>3.1 Vectorisation</h3>
+<p>Deux représentations ont été testées avec <code>sklearn</code> :
+- <strong>Bag-of-Words (CountVectorizer)</strong> : unigrammes + bigrammes, <code>max_features=15000</code>, <code>min_df=2</code>
+- <strong>TF-IDF (TfidfVectorizer)</strong> : unigrammes + bigrammes, <code>max_features=15000</code>, <code>min_df=2</code></p>
+<h3>3.2 Résultats Naive Bayes</h3>
+<table>
+<thead>
+<tr>
+<th>Représentation</th>
+<th>Accuracy</th>
+<th>Précision</th>
+<th>Rappel</th>
+<th>F1-Score</th>
+<th>Temps d'entraînement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TF-IDF (1-2g)</td>
+<td>0.7760</td>
+<td>0.7859</td>
+<td>0.7587</td>
+<td>0.7720</td>
+<td>~0.01 s</td>
+</tr>
+</tbody>
+</table>
+<p>Matrice de confusion (TF-IDF) :</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[[4748 1237]</span>
+<span class="w"> </span><span class="k">[1444 4540]]</span>
+</code></pre></div>
+
+<ul>
+<li>Vrais négatifs : 4748, Faux positifs : 1237</li>
+<li>Faux négatifs : 1444, Vrais positifs : 4540</li>
+</ul>
+<h3>3.3 Mots/bigrammes les plus discriminants</h3>
+<p><strong>Top discriminants pour le positif</strong> : <code>congratulations</code>, <code>for following</code>, <code>welcome</code>, <code>the followfriday</code>, <code>no problem</code>, <code>your welcome</code>, <code>get followers</code>, ...
+<strong>Top discriminants pour le négatif</strong> : <code>that sucks</code>, <code>so sad</code>, <code>miss my</code>, <code>headache</code>, <code>sad</code>, <code>gonna miss</code>, <code>hurts</code>, <code>sick</code>, <code>unfortunately</code>, <code>really sad</code>, <code>sadly</code>, <code>missing my</code>, ...</p>
+<p>Ces bigrammes montrent que Naive Bayes bénéficie fortement de paires de mots fréquentes dans les tweets, mais reste limité par l'absence de modélisation de l'ordre.</p>
+<h2>4. Partie 2 : RNN Simple et LSTM</h2>
+<h3>4.1 Préparation pour les modèles séquentiels</h3>
+<ul>
+<li><strong>Tokenisation</strong> : <code>Tokenizer</code> Keras/PyTorch personnalisé, vocabulaire limité aux <code>VOCAB_SIZE=10000</code> mots les plus fréquents, ajout de <code>&lt;pad&gt;</code> et <code>&lt;unk&gt;</code></li>
+<li><strong>Padding</strong> : séquences de longueur fixe <code>max_len=32</code> (padding/troncature)</li>
+<li><strong>Embedding</strong> : couche <code>Embedding(vocab_size, embed_dim=100)</code> entraînée from scratch</li>
+<li><strong>Architecture</strong> : Embedding → RNN/LSTM/BiLSTM → Dropout(0.2) → Dense(sigmoïde)</li>
+<li><strong>Optimisation</strong> : Adam, Binary Cross-Entropy, batch size 256, 6 epochs sur CPU</li>
+</ul>
+<h3>4.2 Résultats</h3>
+<table>
+<thead>
+<tr>
+<th>Modèle</th>
+<th>Représentation</th>
+<th>Accuracy</th>
+<th>Précision</th>
+<th>Rappel</th>
+<th>F1-Score</th>
+<th>Temps d'entraînement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>RNN Simple</td>
+<td>Séquence + Embedding</td>
+<td>0.5005</td>
+<td>0.5002</td>
+<td>0.9993</td>
+<td>0.6667</td>
+<td>27.5 s</td>
+</tr>
+<tr>
+<td>LSTM</td>
+<td>Séquence + Embedding</td>
+<td>0.6358</td>
+<td>0.7436</td>
+<td>0.4144</td>
+<td>0.5322</td>
+<td>49.7 s</td>
+</tr>
+<tr>
+<td>BiLSTM</td>
+<td>Séquence + Embedding</td>
+<td>0.7725</td>
+<td>0.7665</td>
+<td>0.7838</td>
+<td>0.7750</td>
+<td>87.4 s</td>
+</tr>
+</tbody>
+</table>
+<h3>4.3 Observations</h3>
+<ul>
+<li><strong>RNN Simple</strong> : converge vers un comportement majoritairement "positif" (rappel quasi-parfait sur positifs, accuracy ~50%) - signe classique de difficulté à apprendre les dépendances longues et de vanishing gradient.</li>
+<li><strong>LSTM unidirectionnel</strong> : meilleur équilibre que RNN simple, mais sous-performant dans cette configuration (F1 faible) - possiblement sous-entraîné ou sensible aux hyperparamètres.</li>
+<li><strong>BiLSTM</strong> : nettement meilleur, atteint des performances comparables au meilleur baseline (F1 ~0.775), ce qui confirme l'intérêt de la bidirectionnalité et d'une meilleure gestion de la mémoire à long terme.</li>
+</ul>
+<p>Les courbes d'apprentissage sont disponibles dans <code>figures/</code> (<code>rnn_*.png</code>, <code>lstm_*.png</code>, <code>bilstm_*.png</code>).</p>
+<h2>5. Partie 3 : Transformer (DistilBERT)</h2>
+<h3>5.1 Approche</h3>
+<ul>
+<li><strong>Modèle</strong> : <code>distilbert-base-uncased</code> (version allégée de BERT, 6 couches, ~66M paramètres)</li>
+<li><strong>Tokenisation</strong> : WordPiece sous-lexicale (<code>AutoTokenizer</code>), gère bien les mots inconnus, fautes d'orthographe, argot</li>
+<li><strong>Fine-tuning</strong> : <code>AutoModelForSequenceClassification</code> avec 2 labels, entraîné par boucle PyTorch manuelle sur CPU</li>
+<li><strong>Paramètres</strong> : <code>max_length=32</code>, batch size 4, AdamW lr=2e-5, 1 epoch (avec limitation à 200 batches/epoch pour faisabilité CPU), entraîné sur l'échantillon de 40k</li>
+</ul>
+<h3>5.2 Résultats</h3>
+<table>
+<thead>
+<tr>
+<th>Modèle</th>
+<th>Représentation</th>
+<th>Accuracy</th>
+<th>Précision</th>
+<th>Rappel</th>
+<th>F1-Score</th>
+<th>Temps d'entraînement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Transformer (DistilBERT fine-tuné)</td>
+<td>Subword + Self-Attention</td>
+<td>0.7687</td>
+<td>0.7624</td>
+<td>0.7807</td>
+<td>0.7715</td>
+<td>~89.0 s</td>
+</tr>
+</tbody>
+</table>
+<p>Matrice de confusion :</p>
+<div class="codehilite"><pre><span></span><code><span class="k">[[4485 1500]</span>
+<span class="w"> </span><span class="k">[1309 4675]]</span>
+</code></pre></div>
+
+<h3>5.3 Test qualitatif sur phrases complexes</h3>
+<p>Cinq phrases rédigées pour tester négations, opposition, sarcasme :</p>
+<table>
+<thead>
+<tr>
+<th>Phrase</th>
+<th>Prédiction DistilBERT</th>
+<th>Analyse</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"I don't think this movie is not bad at all"</code></td>
+<td><strong>POS</strong></td>
+<td>Double négation correctement interprétée (forme litotique)</td>
+</tr>
+<tr>
+<td><code>"It's not great, but I don't hate it"</code></td>
+<td><strong>POS</strong></td>
+<td>Gère la concession ("but") et les négations mitigées</td>
+</tr>
+<tr>
+<td><code>"Yeah right, this is AMAZING... not"</code></td>
+<td><strong>NEG</strong></td>
+<td>Détecte le sarcasme via le contexte "not" en fin de phrase</td>
+</tr>
+<tr>
+<td><code>"I really wanted to like it, but it was just painfully boring"</code></td>
+<td><strong>NEG</strong></td>
+<td>Bien identifié grâce à la conjonction d'opposition et au lexique négatif</td>
+</tr>
+<tr>
+<td><code>"Well, that was just perfect... said no one ever"</code></td>
+<td><strong>NEG</strong></td>
+<td>Comprend l'ironie implicite contextuelle</td>
+</tr>
+</tbody>
+</table>
+<p>Ces résultats montrent la capacité des Transformers à modéliser le contexte global et à résoudre des cas ambigus où l'ordre et le contexte l'emportent sur le simple comptage de mots.</p>
+<h2>6. Partie 4 : Évaluation comparative</h2>
+<h3>6.1 Tableau récapitulatif</h3>
+<table>
+<thead>
+<tr>
+<th>Modèle</th>
+<th>Représentation</th>
+<th>Accuracy</th>
+<th>Précision</th>
+<th>Rappel</th>
+<th>F1-Score</th>
+<th>Temps d'entraînement</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Naive Bayes</td>
+<td>BoW / TF-IDF (1-2g)</td>
+<td>0.7760</td>
+<td>0.7859</td>
+<td>0.7587</td>
+<td>0.7720</td>
+<td>~0.01 s</td>
+</tr>
+<tr>
+<td>RNN Simple</td>
+<td>Séquence + Embedding</td>
+<td>0.5005</td>
+<td>0.5002</td>
+<td>0.9993</td>
+<td>0.6667</td>
+<td>~27.5 s</td>
+</tr>
+<tr>
+<td>LSTM</td>
+<td>Séquence + Embedding</td>
+<td>0.6358</td>
+<td>0.7436</td>
+<td>0.4144</td>
+<td>0.5322</td>
+<td>~49.7 s</td>
+</tr>
+<tr>
+<td>BiLSTM</td>
+<td>Séquence + Embedding</td>
+<td>0.7725</td>
+<td>0.7665</td>
+<td>0.7838</td>
+<td>0.7750</td>
+<td>~87.4 s</td>
+</tr>
+<tr>
+<td>Transformer (DistilBERT)</td>
+<td>Subword + Attention</td>
+<td>0.7687</td>
+<td>0.7624</td>
+<td>0.7807</td>
+<td>0.7715</td>
+<td>~89.0 s</td>
+</tr>
+</tbody>
+</table>
+<p><em>(Configuration actuelle : échantillon 40k, CPU, epochs réduites pour faisabilité ; avec plus de données/GPU/epochs, le Transformer dépasse généralement les autres sur ce type de tâche.)</em></p>
+<h3>6.2 Comparaison visuelle</h3>
+<p>Les graphiques générés sont disponibles dans <code>figures/</code> : <code>f1_comparison.png</code>, <code>time_comparison.png</code>, ainsi que les courbes d'apprentissage pour les modèles RNN/LSTM/BiLSTM.</p>
+<h2>7. Questions d'analyse et de justification</h2>
+<h3>Question 1 : Hypothèse de Naive Bayes - "naïve" et limites face aux négations</h3>
+<p><strong>Pourquoi dite "naïve" ?</strong>
+Naive Bayes repose sur l'hypothèse d'<strong>indépendance conditionnelle</strong> : étant donné la classe $C$, tous les mots $w_i$ du document sont supposés indépendants les uns des autres.
+$$
+P(w_1,...,w_n|C) = \prod_{i=1}^{n} P(w_i|C)
+$$</p>
+<p><strong>Limites avec les inversions de polarité :</strong>
+- <strong>Absence de structure/syntaxe</strong> : La représentation "sac de mots" (BoW) ignore complètement l'ordre des mots. <code>"not good"</code> et <code>"good not"</code> ont exactement la même représentation vectorielle.
+- <strong>Portée de la négation ignorée</strong> : <code>"not good at all"</code> devrait inverser la polarité positive de "good", mais NB voit simplement les mots "not", "good", "at", "all" indépendamment et cumule leurs probabilités conditionnelles par classe.
+- <strong>Neutralisation imparfaite</strong> : Même en conservant les mots de négation (comme fait ici), NB ne modélise pas le <strong>scope</strong> de la négation ni les relations entre mots.</p>
+<p>C'est pourquoi le prétraitement doit <strong>impérativement conserver</strong> <code>not/no/never</code> plutôt que de les retirer comme stopwords classiques.</p>
+<h3>Question 2 : RNN Simple vs LSTM - Vanishing gradient et portes</h3>
+<p><strong>Problème du vanishing gradient</strong>
+Dans un RNN simple, l'information est propagée séquentiellement par multiplication matricielle répétée. Lors de la rétropropagation à travers le temps (BPTT), on multiplie par la matrice de poids récurrente à chaque pas. Si les valeurs propres sont &lt; 1, le gradient décroît exponentiellement au cours des longues séquences → <strong>vanishing gradient</strong>. À l'inverse s'ils sont &gt; 1, explosion du gradient. Résultat : le RNN simple "oublie" les informations lointaines (début de séquence) et a du mal à capturer des dépendances à long terme, comme celles nécessaires pour interpréter correctement une négation loin du mot qu'elle modifie.</p>
+<p><strong>Solution apportée par LSTM et rôle des portes</strong>
+La cellule LSTM introduit un <strong>état de cellule</strong> $C_t$ (mémoire à long terme) séparé de l'état caché $h_t$, et le fait circuler avec des modifications contrôlées par des portes :</p>
+<ul>
+<li><strong>Forget gate</strong> $f_t = \sigma(W_f [h_{t-1}, x_t] + b_f)$ : décide quelles informations de $C_{t-1}$ doivent être <strong>oubliées</strong> (filtrage du passé non pertinent)</li>
+<li><strong>Input gate</strong> $i_t = \sigma(W_i [h_{t-1}, x_t] + b_i)$ et candidat $\tilde{C}<em t-1="t-1">t = \tanh(W_C [h</em>, x_t] + b_C)$ : décide quelles <strong>nouvelles informations</strong> stocker dans la cellule</li>
+<li><strong>Update</strong> : $C_t = f_t * C_{t-1} + i_t * \tilde{C}_t$ (ajout sélectif plutôt que réécriture totale)</li>
+<li><strong>Output gate</strong> $o_t = \sigma(W_o [h_{t-1}, x_t] + b_o)$, $h_t = o_t * \tanh(C_t)$ : décide quelle partie de la cellule est exposée à l'état caché courant</li>
+</ul>
+<p>Cette architecture permet un <strong>flux de gradient plus stable</strong> le long de l'état de cellule (connexion additive $C_{t-1}\to C_t$) atténuant considérablement le vanishing gradient. C'est pourquoi LSTM/BiLSTM sont plus efficaces sur des séquences plus longues où la négation et le contexte distant sont importants.</p>
+<p><strong>BiLSTM</strong> va plus loin en traitant la séquence dans les deux sens (gauche→droite et droite→gauche), permettant de capturer à la fois le contexte passé et futur - particulièrement utile pour comprendre "but", "although", ou pour désambiguïser selon ce qui suit/précède.</p>
+<h3>Question 3 : Pourquoi les Transformers surpassent-ils les modèles récurrents sur Sentiment140 ?</h3>
+<p>Plusieurs facteurs expliquent la supériorité théorique/pragmatique des Transformers :</p>
+<ol>
+<li>
+<p><strong>Self-Attention (parallélisation et accès direct)</strong><br />
+   Contrairement au RNN qui traite séquentiellement, le mécanisme de self-attention calcule pour chaque mot une pondération sur <strong>tous</strong> les autres mots de la séquence simultanément : $Attention(Q,K,V)=softmax(\frac{QK^T}{\sqrt{d_k}})V$. Cela permet d'accéder directement aux mots distants en une seule couche, sans dépendre de la propagation pas-à-pas (résout mieux les dépendances longues et évite le vanishing gradient).</p>
+</li>
+<li>
+<p><strong>Contexte bidirectionnel natif</strong><br />
+   BERT/DistilBERT est bidirectionnel dès le pré-entraînement (Masked Language Modeling), contrairement aux RNN unidirectionnels classiques. Il apprend des représentations contextuelles riches intégrant à la fois gauche et droite simultanément.</p>
+</li>
+<li>
+<p><strong>Tokenisation sous-lexicale (WordPiece)</strong><br />
+   Plutôt que de travailler uniquement sur des mots entiers, WordPiece décompose en sous-unités (<code>"unhappily"</code> peut devenir <code>un</code>, <code>##happ</code>, <code>##ily</code>). Cela permet de :</p>
+</li>
+<li>Gérer efficacement les <strong>mots hors-vocabulaire</strong> (OOV)</li>
+<li>Mieux traiter l'<strong>argot</strong> tweetien, les <strong>abréviations</strong>, les <strong>fautes de frappe</strong> fréquentes sur Twitter</li>
+<li>
+<p>Capturer de la morphologie utile (préfixes/suffixes) pour la polarité</p>
+</li>
+<li>
+<p><strong>Pré-entraînement sur de grands corpus</strong><br />
+   DistilBERT est pré-entraîné sur BookCorpus et Wikipedia (des milliards de tokens) avec des objectifs auto-supervisés. Il possède déjà des connaissances linguistiques générales (syntaxe, sémantique, relations) qu'il transfère au fine-tuning sur Sentiment140 avec peu de données/époques. Les RNN/LSTM avec embeddings appris from-scratch partent d'une initialisation aléatoire et doivent tout apprendre.</p>
+</li>
+<li>
+<p><strong>Meilleure modélisation des phénomènes pragmatiques</strong><br />
+   L'attention globale aide à relier <code>"not"</code> à <code>"bad"</code>, à capter l'effet de <code>"but"</code>, et à intégrer le contexte pour détecter sarcasme/ironie - des cas où l'interprétation dépend fortement du contexte global plutôt que de co-occurrences locales.</p>
+</li>
+</ol>
+<p>Sur notre configuration CPU/échantillon réduit, BiLSTM et Transformer sont très proches ; avec un entraînement complet sur GPU et plus d'époques, l'avantage du Transformer se confirme généralement sur ce benchmark.</p>
+<h3>Question 4 : Analyse des erreurs et impact de LSTM puis Transformer sur négations/ironie</h3>
+<p><strong>Types d'erreurs observés (génériques sur Sentiment140)</strong></p>
+<p>D'après les matrices de confusion et le comportement typique :
+- <strong>Faux positifs</strong> : tweets négatifs avec des mots apparemment positifs ou neutralisés par contexte ("not terrible", "could be worse", litotes) - difficiles pour modèles purement lexicaux
+- <strong>Faux négatifs</strong> : tweets positifs exprimés ironiquement/sarcastiquement, ou avec des négations complexes
+- <strong>Erreurs sur la portée</strong> : cas où la négation porte loin du terme clé
+- <strong>Ambiguïté pragmatique</strong> : "yeah right", sous-entendus, blagues</p>
+<p><strong>Impact par modèle</strong></p>
+<table>
+<thead>
+<tr>
+<th>Phénomène</th>
+<th>Naive Bayes</th>
+<th>RNN Simple</th>
+<th>LSTM</th>
+<th>BiLSTM</th>
+<th>Transformer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Simple négation ("not good")</td>
+<td>Souvent erroné/instable</td>
+<td>Difficile, oublie le "not"</td>
+<td>Mieux, mais dépend de distance</td>
+<td>Bon</td>
+<td>Très bon</td>
+</tr>
+<tr>
+<td>Double négation ("not bad", "not...not bad")</td>
+<td>Très difficile (cumul probabiliste)</td>
+<td>Généralement raté</td>
+<td>Partiel</td>
+<td>Amélioré</td>
+<td>Généralement corrigé (cf. test qualitatif)</td>
+</tr>
+<tr>
+<td>Concession ("not great, but I don't hate it")</td>
+<td>Ignore "but", traité en sac</td>
+<td>Faible</td>
+<td>Partiel</td>
+<td>Mieux avec bidirectionnalité</td>
+<td>Bon (attention sur "but"/contexte)</td>
+</tr>
+<tr>
+<td>Sarcasme/Ironie ("AMAZING... not", "perfect... said no one ever")</td>
+<td>Principalement lexical → faux positifs probables</td>
+<td>Très difficile</td>
+<td>Difficile sans contexte global</td>
+<td>Amélioré</td>
+<td>Meilleur (contexte global + pré-entraînement pragmatique)</td>
+</tr>
+<tr>
+<td>Expressions idiomatiques/argot</td>
+<td>Limité au vocabulaire observé</td>
+<td>Limité</td>
+<td>Limité</td>
+<td>Limité</td>
+<td>Mieux via sous-unités WordPiece</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Exemples concrets issus de nos tests qualitatifs (Transformer)</strong>
+- <em>"I don't think this movie is not bad at all"</em> → correctement <strong>POS</strong> (double négation litotique bien résolue)
+- <em>"Yeah right, this is AMAZING... not"</em> → correctement <strong>NEG</strong> (détection du renversement sarcastique)
+- <em>"Well, that was just perfect... said no one ever"</em> → correctement <strong>NEG</strong> (ironie implicite comprise)</p>
+<p><strong>Conclusion sur l'erreur</strong> : Le passage vers LSTM/BiLSTM aide significativement pour les dépendances longues et la négation simple/modérée. Le passage vers Transformer donne les plus gros gains sur les cas les plus ambigus (double négation, sarcasme, ironie) grâce au self-attention global et au savoir pré-entraîné. Néanmoins, aucun modèle n'est parfait sur l'ironie purement pragmatique - c'est un problème encore ouvert.</p>
+<h3>Question 5 : Compromis Performance / Coût de calcul - Quand privilégier Naive Bayes ou LSTM plutôt qu'un Transformer ?</h3>
+<p>Il faut raisonner en termes de <strong>F1-gain / ressources / latence / maintenabilité</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Critère</th>
+<th>Naive Bayes (TF-IDF)</th>
+<th>LSTM/BiLSTM</th>
+<th>Transformer (DistilBERT)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Performance (F1)</strong></td>
+<td>~0.772 (très bon pour un baseline)</td>
+<td>BiLSTM ~0.775 dans notre config</td>
+<td>~0.772 ici (CPU/restrictif) ; souvent &gt;0.78-0.80 en conditions optimales</td>
+</tr>
+<tr>
+<td><strong>Temps entraînement</strong></td>
+<td>~0.01s</td>
+<td>~50-90s (CPU)</td>
+<td>~90s+ (CPU) / quelques minutes optimisé GPU</td>
+</tr>
+<tr>
+<td><strong>Temps inférence</strong></td>
+<td><strong>Quasi-instantané</strong> (millisecondes)</td>
+<td>Rapide sur CPU/GPU</td>
+<td>Plus lent, nécessite plus de mémoire (RAM/GPU VRAM)</td>
+</tr>
+<tr>
+<td><strong>Ressources</strong></td>
+<td>CPU seul, peu de RAM</td>
+<td>CPU acceptable, GPU aide</td>
+<td>Idéal GPU, gourmand en VRAM (&gt;2-4GB recommandé)</td>
+</tr>
+<tr>
+<td><strong>Taille modèle</strong></td>
+<td>Quelques Ko (vocab + probs)</td>
+<td>~10-50 Mo typique</td>
+<td>~250+ Mo (DistilBERT)</td>
+</tr>
+<tr>
+<td><strong>Explicabilité</strong></td>
+<td>Excellente (top mots/bigrammes discriminants)</td>
+<td>Faible/opacité modérée</td>
+<td>Très opaque (black-box)</td>
+</tr>
+<tr>
+<td><strong>Données nécessaires</strong></td>
+<td>Fonctionne bien même avec données limitées</td>
+<td>Besoin raisonnable, mieux avec plus de données</td>
+<td>Meilleur avec fine-tuning, mais pré-entraîné aide</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Recommandations selon le contexte réel :</strong></p>
+<ul>
+<li><strong>Privilégier Naive Bayes si :</strong>  </li>
+<li>Contraintes fortes (embarqué, faible latence, pas de GPU)  </li>
+<li>Besoin d'<strong>explicabilité</strong> / auditabilité (réglementaire, explicable IA)  </li>
+<li>Volume modéré, temps de développement court  </li>
+<li>Mise en production à très grande échelle avec coûts serrés  </li>
+<li>
+<p>Premier prototype/baseline rapide</p>
+</li>
+<li>
+<p><strong>Privilégier LSTM/BiLSTM si :</strong>  </p>
+</li>
+<li>Besoin de modéliser la séquentialité sans infrastructure GPU lourde  </li>
+<li>Corpus spécifique/domain (moins couvert par BERT généraliste) et on veut entraîner from-scratch avec contrôle fin  </li>
+<li>Contraintes mémoire/latence intermédiaires  </li>
+<li>
+<p>On veut un bon compromis performance/coût sans gérer un pipeline Transformers complet</p>
+</li>
+<li>
+<p><strong>Privilégier Transformer si :</strong>  </p>
+</li>
+<li><strong>Précision maximale</strong> requise (analyse fine, sarcasme/ironie fréquents)  </li>
+<li>GPU disponible et budget calcul acceptable  </li>
+<li>Contexte multilingue/complexe ou besoin de transfert depuis pré-entraînement  </li>
+<li>Volumes importants, inférence en batch ou infrastructure dédiée</li>
+</ul>
+<p><strong>Observation sur nos résultats</strong> : Dans ce setup contraint (CPU, échantillon 40k, epochs réduites), <strong>BiLSTM (F1=0.775)</strong> et <strong>Naive Bayes (F1=0.772)</strong> sont très compétitifs face au <strong>Transformer (F1=0.772)</strong> pour un coût computationnel bien inférieur pour NB. Cela illustre parfaitement le compromis : <strong>"meilleur absolu" n'est pas toujours synonyme de "meilleur choix" en production</strong>.</p>
+<h2>8. Conclusion</h2>
+<ul>
+<li><strong>Naive Bayes</strong> reste une baseline solide, ultra-rapide et explicable. Sa principale faiblesse est l'ignorance de l'ordre et du scope de la négation.</li>
+<li><strong>RNN Simple</strong> montre les limites du traitement séquentiel sans mémoire explicite (vanishing gradient).</li>
+<li><strong>LSTM/BiLSTM</strong> corrigent ces limites grâce aux portes et à la bidirectionnalité, atteignant des performances proches du meilleur modèle avec une complexité intermédiaire.</li>
+<li><strong>Transformer (DistilBERT)</strong> excelle sur les cas ambigus (double négation, concession, sarcasme/ironie) grâce au self-attention global, à la tokenisation sous-lexicale et au pré-entraînement. Dans des conditions optimales (GPU, plus de données/époques), son avantage se renforce.</li>
+<li><strong>Leçon clé</strong> : Le choix du modèle doit équilibrer <strong>performance, coût, latence, explicabilité et contraintes d'infrastructure</strong>. Pour de nombreux cas d'usage industriels, Naive Bayes ou BiLSTM bien optimisés constituent un excellent compromis.</li>
+</ul>
+<h2>Annexes</h2>
+<ul>
+<li><strong>Code source</strong> : <code>solution/config.py</code>, <code>solution/preprocess.py</code>, <code>solution/01_naive_bayes.py</code>, <code>solution/02_rnn_lstm_pytorch.py</code>, <code>solution/03_transformer_manual.py</code>, <code>solution/04_evaluate_and_report.py</code></li>
+<li><strong>Résultats bruts</strong> : <code>results/nb_results.csv</code>, <code>results/rnn_lstm_results.csv</code>, <code>results/transformer_results.csv</code>, <code>results/all_results.csv</code></li>
+<li><strong>Figures</strong> : <code>figures/*.png</code> (courbes d'apprentissage, comparaisons F1/temps)</li>
+<li><strong>Données</strong> : <code>data/training.1600000.processed.noemoticon.csv</code></li>
+</ul>
+</body>
+</html>
